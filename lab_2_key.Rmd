@@ -1,0 +1,211 @@
+---
+title: "ESM 244 Lab 2 Part 1"
+subtitle: "Wrangling continued, PCA"
+author: "Allison Horst"
+date: "1/13/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(janitor)
+library(naniar)
+library(VIM)
+library(skimr)
+library(ggfortify)
+```
+
+## A. Get the data
+
+Data: 
+
+- California pollution burden (California Office of Environmental Health Hazard Assessment (OEHHA)’s CalEnviroScreen database, https://oehha.ca.gov/calenviroscreen/maps-data/download-data). See metadata (included as separate file). 
+- California county demographics (from: CA census 2010)
+
+Read it in: 
+```{r}
+ca_pb <- read_csv("ca_pollution_burden.csv")
+ca_dem <- read_csv("ca_census_demographics_2010.csv")
+```
+
+## B. Do some cleaning 
+
+1. For the pollution burden data: 
+
+- Clean up the column headers
+- Exclude any column that is a calculated percentile (contains 'percentile', 'perc', or 'pctl')
+
+```{r}
+ca_pb_nopct <- ca_pb %>% 
+  clean_names() %>% 
+  select(-contains("pctl")) %>% 
+  select(-contains("perc")) %>% 
+  select(-latitude, - longitude)
+```
+
+2. For the demographic data:
+
+- Clean up column names
+
+```{r}
+ca_dem_clean <- ca_dem %>% 
+  clean_names()
+```
+
+
+3. PCA for pollution burden indicator variables
+
+First, starting with ca_pb_nopct:
+
+**Note**: The pollution burden and population characteristic variables are aggregates (averages) of existing variables in the data frame, so we won't include those. That means we'll include columns:
+
+- From `ozone:solid_waste`, and
+- Frome `asthma:housing_burden`
+
+First, just selecting those:
+```{r}
+ca_pb_subset <- ca_pb_nopct %>% 
+  select(ozone:solid_waste, asthma:housing_burden)
+```
+
+We'll use the `prcomp` function:
+- ?prcomp
+
+```{r, eval = FALSE}
+
+pb_pca <- prcomp(ca_pb_subset, scale = TRUE) # hmmm an error 
+
+```
+
+Look at the NA situation:
+```{r}
+summary(ca_pb_subset) # Max NAs in a variable: 242 (/8035)
+```
+
+A little aside: the `naniar` package for exploring missingness!
+See: https://naniar.njtierney.com/
+
+Use `naniar::gg_miss_var()` to plot the number of missings by variable:
+```{r}
+# Plot number of missings by variable
+gg_miss_var(ca_pb_subset)
+```
+
+We can also explore NAs visually in other ways using the `VIM` package.
+
+The `VIM::matrixplot()` function creates a heatmap, where values are shown on a continuous grayscale, and missings are in red:
+```{r}
+matrixplot(ca_pb_subset)
+
+# We can also sort by a variable of interest. Let's say we want to sort by poverty:
+matrixplot(ca_pb_subset, sortby = "poverty")
+```
+
+Let's say our conclusion is that there are missings, but not many (compared to the actual scope of the data). We'll only keep our complete cases (census tracts without any missings).
+
+Use `tidyr::drop_na()` with no variables specified to keep complete cases across all variables:
+
+```{r}
+ca_pb_nona <- ca_pb_subset %>% 
+  drop_na()
+
+# Now check for NAs:
+summary(ca_pb_nona)
+
+# Or use `skimr::skim()`!
+skim(ca_pb_nona)
+```
+
+Cool. No NAs, checked out missingness, NOW let's try PCA again: 
+
+```{r}
+my_ca_pca <- prcomp(ca_pb_nona, scale = TRUE)
+
+# A nightmare! But what are we looking at? 
+plot(my_ca_pca)
+biplot(my_ca_pca)
+
+# Hmmm let's try something else (this requires ggfortify): 
+my_biplot <- autoplot(my_ca_pca, 
+                      colour = NA,
+                      loadings.label = TRUE,
+                      loadings.label.size = 3,
+                      loadings.label.colour = "black",
+                      loadings.label.repel = TRUE) +
+  theme_minimal()
+  
+
+my_biplot
+
+
+```
+
+4. Join data by census tract (inner join)
+
+```{r}
+
+ca_df <- ca_dem_clean %>% 
+  inner_join(ca_pb_nopct, by = c("census_tract_number" = "census_tract"))
+
+```
+
+Check it out, then get complete cases:
+```{r}
+ca_df_nona <- ca_df %>% 
+  drop_na()
+```
+
+5. Make a new subset for PCA, that includes % white and elderly, and some interesting pollution burden & health indicators:
+
+Like (you can choose a different set): 
+
+- white_percent
+- elderly_65_percent
+- pm2_5
+- pesticides
+- traffic
+- asthma
+- cardiovascular_disease
+- poverty
+
+Make our subset:
+```{r}
+my_sub <- ca_df_nona %>% 
+  select(white_percent, elderly_65_percent, pm2_5, pesticides, traffic, asthma, cardiovascular_disease, poverty)
+```
+
+Then run PCA: 
+```{r}
+my_dem_pca <- prcomp(my_sub, scale = TRUE)
+biplot(my_dem_pca) # Noooo. We need better
+```
+
+Check it out a bit: 
+```{r}
+# Proportion of variance (& cumulative variance) explained by each PC
+summary(my_dem_pca)
+
+# Rotations (linear combinations for each PC):
+my_dem_pca
+```
+
+Make a sweet biplot:
+```{r}
+my_dem_biplot <- autoplot(my_dem_pca, 
+                      colour = NA,
+                      loadings.label = TRUE,
+                      loadings.label.size = 3,
+                      loadings.label.colour = "black",
+                      loadings.label.repel = TRUE) +
+  theme_minimal() +
+  scale_y_continuous(limits = c(-0.05, 0.05))
+
+my_dem_biplot
+  
+```
+
+What are a few main things we can take out of this? What are the main correlations you notice? Are they in line with what you would expect, or is anything surprising? 
+
+### End PCA section
+
